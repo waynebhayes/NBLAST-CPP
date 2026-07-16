@@ -5,6 +5,7 @@
 
 # python venv
 .venv
+__pycache__
 
 # output files
 obj
@@ -19,3 +20,5 @@ test_runner
 # data
 data
 legacy-nblast
+*.rda
+*.RData

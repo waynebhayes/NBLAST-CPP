@@ -44,10 +44,75 @@ Matrix &Matrix::toECDF() {
   return *this;
 }
 
+double Matrix::totalCount() const {
+  double total = 0.0;
+  for (size_t i = 0; i < table.size(); ++i) {
+    for (size_t j = 0; j < table[i].size(); ++j) {
+      total += table[i][j];
+    }
+  }
+  return total;
+}
+
+Matrix &Matrix::toProbability() {
+  if (table.empty() || table[0].empty())
+    throw std::runtime_error(
+        "cannot convert to probability: matrix empty/invalid");
+
+  double total = totalCount();
+  if (total == 0.0)
+    throw std::runtime_error(
+        "cannot convert to probability: total sum of matrix is zero");
+
+  for (size_t i = 0; i < table.size(); ++i) {
+    for (size_t j = 0; j < table[i].size(); ++j) {
+      table[i][j] /= total;
+    }
+  }
+  return *this;
+}
+
 double Matrix::score(double distance, double angle) const {
-  int row = findDistanceBin(distance);
-  int col = findAngleBin(angle);
-  return table.at(row).at(col);
+  if (table.empty() || table[0].empty())
+    return 0.0;
+
+  auto itDist =
+      std::lower_bound(distanceBins.begin(), distanceBins.end(), distance);
+  auto itAngle = std::lower_bound(angleBins.begin(), angleBins.end(), angle);
+
+  size_t i1 = std::distance(distanceBins.begin(), itDist);
+  size_t j1 = std::distance(angleBins.begin(), itAngle);
+
+  if (i1 >= distanceBins.size())
+    i1 = distanceBins.size() - 1;
+  if (j1 >= angleBins.size())
+    j1 = angleBins.size() - 1;
+
+  if (i1 == 0 || j1 == 0 || itDist == distanceBins.end() ||
+      itAngle == angleBins.end() || !interpolate) {
+    return table[i1][j1];
+  }
+
+  size_t i0 = i1 - 1;
+  size_t j0 = j1 - 1;
+
+  double x0 = distanceBins[i0];
+  double x1 = distanceBins[i1];
+  double y0 = angleBins[j0];
+  double y1 = angleBins[j1];
+
+  double f00 = table[i0][j0];
+  double f01 = table[i0][j1];
+  double f10 = table[i1][j0];
+  double f11 = table[i1][j1];
+
+  double dx = (distance - x0) / (x1 - x0);
+  double dy = (angle - y0) / (y1 - y0);
+
+  double fx0 = f00 + dx * (f10 - f00);
+  double fx1 = f01 + dx * (f11 - f01);
+
+  return fx0 + dy * (fx1 - fx0);
 }
 std::ostream &operator<<(std::ostream &out, const Matrix &mat) {
   constexpr int precision = 4;
@@ -65,7 +130,7 @@ std::ostream &operator<<(std::ostream &out, const Matrix &mat) {
   out << "\n";
 
   for (size_t j = 0; j < mat.table.size(); ++j) {
-    out << std::fixed << std::setprecision(0);
+    out << std::fixed << std::setprecision(2);
     out << mat.distanceBins[j] << "\t";
     out << std::fixed << std::setprecision(precision);
 

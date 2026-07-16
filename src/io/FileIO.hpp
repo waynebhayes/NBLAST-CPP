@@ -9,6 +9,7 @@
 #include <vector>
 
 PointVector loadPoints(const std::string &filepath);
+Matrix loadMatrixFromTSV(const std::string &filepath);
 
 std::vector<Neuron>
 loadNeurons(const std::vector<std::string> &neuronFilepaths);

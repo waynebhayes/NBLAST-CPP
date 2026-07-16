@@ -2,7 +2,6 @@
 #include "analysis/Pipeline.hpp"
 #include "core/Matrix.hpp"
 #include "io/FileIO.hpp"
-#include "io/MatrixIO.hpp"
 #include "utils/ArgParse.hpp"
 #include "utils/Logging.hpp"
 #include "utils/StringUtils.hpp"
@@ -13,7 +12,8 @@
 void runQueryMode(const Args &a) {
   LOG_INFO("Using Scoring Matrix: \"%s\"", a.matrixFilepath.c_str());
 
-  Matrix mat = MatrixIO::loadMatrixFromTSV(a.matrixFilepath);
+  Matrix mat = loadMatrixFromTSV(a.matrixFilepath);
+  mat.setInterpolate(a.doInterpolation);
   TimerStats ts;
   if (a.positionalArgs.empty()) {
     if (a.doAllByAll) {
@@ -61,9 +61,11 @@ void runQueryMode(const Args &a) {
         s.print(std::cout, "\t");
       }
       std::cout.flush();
-      std::ofstream tout("query-times.txt");
-      ts.print(tout);
-      tout.close();
+      if (a.doDump) {
+        std::ofstream tout("out/query-times.txt");
+        ts.print(tout);
+        tout.close();
+      }
       return;
     }
   }
@@ -92,86 +94,114 @@ void runGeneratorMode(const Args &a) {
   if (a.mode != option_t::GenerateScoringMatrix) {
     throw std::runtime_error("something went wrong.");
   }
-  // LOG_DEBUG("grabbing swc filepaths for query dataset...");
-  // StringVector queryFilepathVector =
-  //     getDatasetFilepaths(a.queryDatasetFilepath);
-  // LOG_DEBUG("query dataset size: %d", queryFilepathVector.size());
-  //
-  // LOG_DEBUG("grabbing swc filepaths for target dataset...");
-  // StringVector targetFilepathVector =
-  //     getDatasetFilepaths(a.targetDatasetFilepath);
-  // LOG_DEBUG("target dataset size: %d", targetFilepathVector.size());
-  //
-  // LOG_DEBUG("getting known matches filepaths from %s",
-  //           a.knownMatchesFilepath.c_str());
-  // auto [knownMatchesQueryVector, knownMatchesTargetVector] =
-  //     getKnownMatchesFilepaths(a);
-  // LOG_DEBUG("known matches: query size = %d, target size = %d",
-  //           knownMatchesQueryVector.size(), knownMatchesQueryVector.size());
-  //
-  // auto [distanceBins, angleBins] =
-  //     generateBins(queryFilepathVector, targetFilepathVector,
-  //                  knownMatchesQueryVector, knownMatchesTargetVector, 10, 5);
-  //
-  // Matrix knownMatrix(distanceBins, angleBins);
-  // Matrix randomMatrix(distanceBins, angleBins);
-  // size_t iters = a.numGeneratorIterations;
-  // while (iters > 0) {
-  //   LOG_DEBUG("iterations left %d", a.numGeneratorIterations);
-  //   --iters;
-  //
-  //   // known matches
-  //   LOG_DEBUG("starting known match");
-  //   trainMatrixStep(a, knownMatchesQueryVector, knownMatchesTargetVector,
-  //                   knownMatrix);
-  //
-  //   // random matches
-  //   LOG_DEBUG("starting random match");
-  //   trainMatrixStep(a, queryFilepathVector, targetFilepathVector,
-  //   randomMatrix);
-  // }
-  //
-  // if (a.doDump) {
-  //   // ensures directory out is there once (don't have to do again)
-  //   ensureDirectory("out/knownCounts.tsv");
-  //   std::ofstream kcout("out/knownCounts.tsv");
-  //   kcout << knownMatrix;
-  //   kcout.close();
-  //
-  //   knownMatrix.prefixSum().toECDF();
-  //   std::ofstream keout("out/knownECDF.txt");
-  //   keout << knownMatrix;
-  //   keout.close();
-  //
-  //   std::ofstream rcout("out/randomCounts.tsv");
-  //   rcout << randomMatrix;
-  //   rcout.close();
-  //
-  //   randomMatrix.prefixSum().toECDF();
-  //   std::ofstream reout("out/randomECDF.txt");
-  //   reout << randomMatrix;
-  //   reout.close();
-  // } else {
-  //   knownMatrix.prefixSum().toECDF();
-  //   randomMatrix.prefixSum().toECDF();
-  // }
-  //
-  // Matrix logLikelihoodMatrix(distanceBins, angleBins);
-  // const double epsilon = 1e-12;
-  // for (size_t i = 0; i < logLikelihoodMatrix.getTable().size(); ++i) {
-  //   for (size_t j = 0; j < logLikelihoodMatrix.getTable()[i].size(); ++j) {
-  //     logLikelihoodMatrix.getTable()[i][j] =
-  //         std::log2(knownMatrix.getTable()[i][j] /
-  //                   (randomMatrix.getTable()[i][j] + epsilon));
-  //   }
-  // }
-  // if (!a.matrixOutfile.empty()) {
-  //   std::ofstream mout(a.matrixOutfile);
-  //   mout << logLikelihoodMatrix;
-  //   mout.close();
-  // } else {
-  //   std::cout << logLikelihoodMatrix;
-  // }
+  LOG_DEBUG("grabbing swc filepaths for query dataset...");
+  StringVector queryFilepathVector =
+      getDatasetFilepaths(a.queryDatasetFilepath);
+  LOG_DEBUG("query dataset size: %ld", queryFilepathVector.size());
+
+  LOG_DEBUG("grabbing swc filepaths for target dataset...");
+  StringVector targetFilepathVector =
+      getDatasetFilepaths(a.targetDatasetFilepath);
+  LOG_DEBUG("target dataset size: %ld", targetFilepathVector.size());
+
+  LOG_DEBUG("getting known matches filepaths from %s",
+            a.knownMatchesFilepath.c_str());
+  auto [knownMatchesQueryVector, knownMatchesTargetVector] =
+      getKnownMatchesFilepaths(a);
+  LOG_DEBUG("known matches: query size = %ld, target size = %ld",
+            knownMatchesQueryVector.size(), knownMatchesTargetVector.size());
+
+  LOG_INFO("Pre-caching query neurons...");
+  std::vector<Neuron> queryNeurons = loadNeurons(queryFilepathVector);
+  LOG_INFO("Pre-caching target neurons...");
+  std::vector<Neuron> targetNeurons = loadNeurons(targetFilepathVector);
+
+  LOG_INFO("Pre-caching known match neurons...");
+  std::vector<Neuron> knownQueryNeurons = loadNeurons(knownMatchesQueryVector);
+  std::vector<Neuron> knownTargetNeurons = loadNeurons(knownMatchesTargetVector);
+
+  DoubleVector distanceBins, angleBins;
+  if (a.useLogBins) {
+    distanceBins.assign(LOG_DISTANCE_BINS.begin(), LOG_DISTANCE_BINS.end());
+    angleBins.assign(ANGLE_BINS.begin(), ANGLE_BINS.end());
+  } else if (a.useRBins) {
+    distanceBins.assign(R_DISTANCE_BINS.begin(), R_DISTANCE_BINS.end());
+    angleBins.assign(R_ANGLE_BINS.begin(), R_ANGLE_BINS.end());
+  } else {
+    auto bins =
+        generateBins(queryFilepathVector, targetFilepathVector,
+                     knownMatchesQueryVector, knownMatchesTargetVector, 2, 5);
+    distanceBins = bins.first;
+    angleBins = bins.second;
+  }
+
+  Matrix knownMatrix(distanceBins, angleBins);
+  Matrix randomMatrix(distanceBins, angleBins);
+
+  // known matches: process all pairs exactly once (matches original NBLAST implementation)
+  LOG_INFO("Training known match matrix from %lu pairs...", knownMatchesQueryVector.size());
+  std::vector<std::pair<size_t, size_t>> knownSubset;
+  knownSubset.reserve(knownMatchesQueryVector.size());
+  for (size_t i = 0; i < knownMatchesQueryVector.size(); ++i) {
+    knownSubset.push_back({i, i});
+  }
+  auto knownResults = calcDistsDotprods(knownQueryNeurons, knownTargetNeurons, knownSubset, false);
+  updateMatrixWithResults(knownMatrix, knownResults);
+
+  // random matches: sample N times for background distribution
+  size_t iters = a.numGeneratorIterations;
+  LOG_INFO("Training random match matrix from %lu samples...", iters);
+  std::vector<std::pair<size_t, size_t>> randomSubset;
+  randomSubset.reserve(iters);
+  std::vector<size_t> sampledQueries;
+  sampledQueries.reserve(iters);
+  for (size_t i = 0; i < iters; ++i) {
+    sampledQueries.push_back(queryFilepathVector.size() * drand48());
+  }
+
+  for (size_t i = 0; i < iters; ++i) {
+    size_t k = sampledQueries[i];
+    size_t l = targetFilepathVector.size() * drand48();
+    randomSubset.push_back({k, l});
+  }
+  auto randomResults = calcDistsDotprods(queryNeurons, targetNeurons, randomSubset, true);
+  updateMatrixWithResults(randomMatrix, randomResults);
+
+  if (a.doDump) {
+    // ensures directory out is there once (don't have to do again)
+    ensureDirectory("out/knownCounts.tsv");
+    std::ofstream kcout("out/knownCounts.tsv");
+    kcout << knownMatrix;
+    kcout.close();
+
+    std::ofstream rcout("out/randomCounts.tsv");
+    rcout << randomMatrix;
+    rcout.close();
+  }
+
+  knownMatrix.toProbability();
+  randomMatrix.toProbability();
+
+  if (a.doDump) {
+    std::ofstream kout("out/knownProb.txt");
+    kout << knownMatrix;
+    kout.close();
+
+    std::ofstream rout("out/randomProb.txt");
+    rout << randomMatrix;
+    rout.close();
+  }
+
+  Matrix logLikelihoodMatrix =
+      calcScoreMatrix(knownMatrix, randomMatrix, 2.0, 1e-12);
+
+  if (!a.matrixOutfile.empty()) {
+    std::ofstream mout(a.matrixOutfile);
+    mout << logLikelihoodMatrix;
+    mout.close();
+  } else {
+    std::cout << logLikelihoodMatrix;
+  }
 }
 
 int run(const Args &a) {

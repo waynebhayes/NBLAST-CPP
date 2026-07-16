@@ -31,7 +31,7 @@ double Point::angleMeasure(const Point &other, bool do_sine) const {
   double otherMagnitude = other.magnitude();
   if (selfMagnitude == 0 || otherMagnitude == 0)
     return 0;
-  double angleMeasure = std::abs(normedDotProduct(*this, other) /
+  double angleMeasure = std::abs(dotProduct(*this, other) /
                                  (selfMagnitude * otherMagnitude));
   if (angleMeasure > 1)
     angleMeasure = 1;
@@ -43,7 +43,7 @@ double Point::angleMeasure(const Point &other, bool do_sine) const {
     return angleMeasure;
 }
 
-double normedDotProduct(const Point &lhs, const Point &rhs) {
+double dotProduct(const Point &lhs, const Point &rhs) {
   return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
 }
 std::ostream &operator<<(std::ostream &out, const Point &p) {

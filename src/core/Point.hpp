@@ -34,7 +34,7 @@ struct Point {
   double distance(const Point &other) const;
   double angleMeasure(const Point &other, bool do_cosine) const;
 
-  friend double normedDotProduct(const Point &lhs, const Point &rhs);
+  friend double dotProduct(const Point &lhs, const Point &rhs);
   friend std::ostream &operator<<(std::ostream &out, const Point &p);
   friend Point operator-(const Point &lhs, const Point &rhs);
   friend Point operator+(const Point &lhs, const Point &rhs);

@@ -1,5 +1,4 @@
 #include "ArgParse.hpp"
-#include "Error.hpp"
 #include "StringUtils.hpp"
 
 #include <cassert>
@@ -9,22 +8,18 @@
 
 extern int optind;
 
+void printUsage(std::ostream &out) { out << USAGE_MSG; }
+
 std::ostream &operator<<(std::ostream &out, option_t op) {
   switch (op) {
   case option_t::Query:
     out << "q";
     break;
+  case option_t::AllByAll:
+    out << "a";
+    break;
   case option_t::GenerateScoringMatrix:
     out << "g";
-    break;
-  case option_t::MatrixSpecified:
-    out << "m";
-    break;
-  case option_t::InputDirectoriesSpecified:
-    out << "i";
-    break;
-  case option_t::DumpIntermediarySteps:
-    out << "d";
     break;
   case option_t::DefaultMode:
     out << "default";
@@ -40,16 +35,10 @@ std::string optToString(option_t m) {
   switch (m) {
   case option_t::Query:
     return "q";
+  case option_t::AllByAll:
+    return "a";
   case option_t::GenerateScoringMatrix:
     return "g";
-  case option_t::MatrixSpecified:
-    return "m";
-  case option_t::InputDirectoriesSpecified:
-    return "i";
-  case option_t::DumpIntermediarySteps:
-    return "d";
-  case option_t::AllByAll:
-    return "q";
   case option_t::DefaultMode:
     return "default";
   default:
@@ -67,7 +56,10 @@ std::ostream &operator<<(std::ostream &out, const Args &a) {
       << "numGeneratorIterations: " << a.numGeneratorIterations << '\n'
       << "doSine: " << a.doSine << '\n'
       << "doDump: " << a.doDump << '\n'
-      << ": " << a.doAllByAll;
+      << "doAllByAll: " << a.doAllByAll << '\n'
+      << "doInterpolation: " << a.doInterpolation << '\n'
+      << "useRBins: " << a.useRBins << '\n'
+      << "useLogBins: " << a.useLogBins;
   return out;
 }
 
@@ -87,7 +79,7 @@ Args parseArgs(int argc, char *argv[]) {
   Args a;
   int opt = 0;
   bool optIProvided = false;
-  while ((opt = getopt(argc, argv, ":hq:g:i:o:sda")) != -1) {
+  while ((opt = getopt(argc, argv, ":hq:g:i:o:sdaIrl")) != -1) {
     switch (opt) {
     // print usage
     case 'h': {
@@ -139,17 +131,19 @@ Args parseArgs(int argc, char *argv[]) {
       optIProvided = true;
       std::pair<std::string, std::string> res;
       int rc = splitOnComma(optarg, res);
-      if (rc) {
-        throw std::runtime_error("-i queryDataset,targetDataset invalid");
+      if (rc == -1) {
+        // No comma: use same directory for both query and target
+        a.queryDatasetFilepath = optarg;
+        a.targetDatasetFilepath = optarg;
+      } else {
+        if (res.first.empty()) {
+          throw std::runtime_error("query dataset filepath empty");
+        } else if (res.second.empty()) {
+          throw std::runtime_error("target dataset filepath empty");
+        }
+        a.queryDatasetFilepath = res.first;
+        a.targetDatasetFilepath = res.second;
       }
-      if (res.first.empty()) {
-        throw std::runtime_error("query dataset filepath empty");
-      } else if (res.second.empty()) {
-        throw std::runtime_error("target dataset filepath empty");
-      }
-      a.queryDatasetFilepath = res.first;
-      a.targetDatasetFilepath = res.second;
-
       break;
     }
     case 'o': {
@@ -166,6 +160,18 @@ Args parseArgs(int argc, char *argv[]) {
     }
     case 'a': {
       a.doAllByAll = true;
+      break;
+    }
+    case 'I': {
+      a.doInterpolation = true;
+      break;
+    }
+    case 'r': {
+      a.useRBins = true;
+      break;
+    }
+    case 'l': {
+      a.useLogBins = true;
       break;
     }
     case ':': {

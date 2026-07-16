@@ -1,5 +1,5 @@
 #include "Test.hpp"
-#include "ArgParse.hpp"
+#include "utils/ArgParse.hpp"
 
 #include <vector>
 #include <unistd.h>
@@ -21,7 +21,6 @@ static std::vector<char*> make_argv(std::vector<const char*> args) {
 TEST_CASE(test_optToString_query) {
     REQUIRE_EQ(optToString(option_t::Query), "q");
     REQUIRE_EQ(optToString(option_t::GenerateScoringMatrix), "g");
-    REQUIRE_EQ(optToString(option_t::MatrixSpecified), "m");
     REQUIRE_EQ(optToString(option_t::DefaultMode), "default");
 }
 
@@ -38,9 +37,7 @@ TEST_CASE(test_args_parse_query_mode) {
     });
 
     int argc = argv.size() - 1;
-    try {
-        args = parseArgs(argc, argv.data());
-    } catch (...) {}
+    args = parseArgs(argc, argv.data());
 
     REQUIRE_EQ(args.mode, option_t::Query);
     REQUIRE_EQ(args.matrixFilepath, "matrix.tsv");

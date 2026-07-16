@@ -2,8 +2,10 @@
 #include "io/FileIO.hpp"
 #include "utils/StringUtils.hpp"
 #include "utils/nanoflann.hpp"
+#include <cmath>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 Neuron::Neuron(const std::string &filepath) {
   basenameNoExt(filepath, nid);
@@ -11,7 +13,8 @@ Neuron::Neuron(const std::string &filepath) {
   for (int i = 0; i < (int)pVector.size(); ++i) {
     idToIndex[pVector[i].id] = i;
   }
-  mpVector.reserve(pVector.size());
+  mpVector = std::make_unique<PointVector>();
+  mpVector->reserve(pVector.size());
   for (const auto &pt : pVector) {
     if (pt.parent == -1)
       continue;
@@ -21,14 +24,14 @@ Neuron::Neuron(const std::string &filepath) {
     }
     int internalParentIndex = idToIndex.at(pt.parent);
     const Point &parentPt = pVector[internalParentIndex];
-    Point m = pt.midpoint(parentPt);
     Point tangent = parentPt - pt;
+    Point pos = pt.midpoint(parentPt);
 
-    mpVector.emplace_back(pt.id, m.x, m.y, m.z, internalParentIndex, tangent.x,
-                         tangent.y, tangent.z);
+    mpVector->emplace_back(pt.id, pos.x, pos.y, pos.z, internalParentIndex,
+                           tangent.x, tangent.y, tangent.z);
   }
 
-  cloud = std::make_unique<PointCloud>(mpVector);
+  cloud = std::make_unique<PointCloud>(*mpVector);
   index = std::make_unique<KDTree>(
       3, *cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
   index->buildIndex();
@@ -37,10 +40,10 @@ Neuron::Neuron(const std::string &filepath) {
 PAVector Neuron::nearestNeighbors(const Neuron &target, bool doSine,
                                   bool doPrint) const {
   PAVector matchVector;
-  matchVector.reserve(this->mpVector.size());
+  matchVector.reserve(this->mpVector->size());
   // For each query midpoint, perform nearest neighbor search
-  for (size_t i = 0; i < this->mpVector.size(); ++i) {
-    const Point &qi = this->mpVector[i];
+  for (size_t i = 0; i < this->mpVector->size(); ++i) {
+    const Point &qi = (*this->mpVector)[i];
     double query_pt[3] = {qi.x, qi.y, qi.z};
 
     size_t nearestIdx = 0;
@@ -51,7 +54,7 @@ PAVector Neuron::nearestNeighbors(const Neuron &target, bool doSine,
     target.index->findNeighbors(resultSet, query_pt,
                                 nanoflann::SearchParameters());
 
-    const Point &ti = target.mpVector[nearestIdx];
+    const Point &ti = (*target.mpVector)[nearestIdx];
 
     // Segment vectors (stored in tx, ty, tz of midpoints)
     Point r_i(qi.id, qi.tx, qi.ty, qi.tz, -1);
@@ -87,35 +90,31 @@ static double sumRawScores(const PAVector &vec) {
   return res;
 }
 
-double Neuron::score(const Neuron &target, const Matrix &mat, bool doSine,
-                     bool doPrint) const {
-  // compute forward score
+double Neuron::selfScore(const Matrix &mat, bool doSine) const {
+  PAVector v = this->nearestNeighbors(*this, doSine);
+  computeRawScores(mat, v);
+  return sumRawScores(v);
+}
+
+double Neuron::score(const Neuron &target, const Matrix &mat,
+                     double querySelf, double targetSelf,
+                     bool doSine, bool doPrint) const {
   PAVector forwardMatchVector = this->nearestNeighbors(target, doSine, doPrint);
   computeRawScores(mat, forwardMatchVector);
-  double forwardTotalScore = sumRawScores(forwardMatchVector);
+  double forwardTotal = sumRawScores(forwardMatchVector);
 
-  // compute forward self score
-  PAVector forwardSelfMatchVector =
-      this->nearestNeighbors(*this, doSine, doPrint);
-  computeRawScores(mat, forwardSelfMatchVector);
-  double forwardSelfTotalScore = sumRawScores(forwardSelfMatchVector);
-
-  // compute reverse score
   PAVector reverseMatchVector = target.nearestNeighbors(*this, doSine, doPrint);
   computeRawScores(mat, reverseMatchVector);
-  double reverseTotalScore = sumRawScores(reverseMatchVector);
+  double reverseTotal = sumRawScores(reverseMatchVector);
 
-  // compute reverse self score
-  PAVector reverseSelfMatchVector =
-      target.nearestNeighbors(target, doSine, doPrint);
-  computeRawScores(mat, reverseSelfMatchVector);
-  double reverseSelfTotalScore = sumRawScores(reverseSelfMatchVector);
+  double normalizedForward = (querySelf != 0) ? (forwardTotal / querySelf) : 0;
+  double normalizedReverse = (targetSelf != 0) ? (reverseTotal / targetSelf) : 0;
+  return (normalizedForward + normalizedReverse) / 2.0;
+}
 
-  // normalize forward and reverse by self
-  // then average for final score
-  double normalizedForward =
-      (forwardSelfTotalScore != 0) ? (forwardTotalScore / forwardSelfTotalScore) : 0;
-  double normalizedReverse =
-      (reverseSelfTotalScore != 0) ? (reverseTotalScore / reverseSelfTotalScore) : 0;
-  return (normalizedForward + normalizedReverse) / 2;
+double Neuron::score(const Neuron &target, const Matrix &mat, bool doSine,
+                     bool doPrint) const {
+  double qs = selfScore(mat, doSine);
+  double ts = target.selfScore(mat, doSine);
+  return score(target, mat, qs, ts, doSine, doPrint);
 }
