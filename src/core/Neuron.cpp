@@ -41,6 +41,9 @@ PAVector Neuron::nearestNeighbors(const Neuron &target, bool doSine,
                                   bool doPrint) const {
   PAVector matchVector;
   matchVector.reserve(this->mpVector->size());
+  // a target with no segments has nothing to match against
+  if (target.mpVector->empty())
+    return matchVector;
   // For each query midpoint, perform nearest neighbor search
   for (size_t i = 0; i < this->mpVector->size(); ++i) {
     const Point &qi = (*this->mpVector)[i];
@@ -98,6 +101,9 @@ double Neuron::directedScore(const Neuron &target, const Matrix &mat,
                              bool doSine) const {
   double total = 0;
   const std::vector<Point> &targetMids = *target.mpVector;
+  // a target with no segments has nothing to match against
+  if (targetMids.empty())
+    return 0;
   for (const Point &qi : *this->mpVector) {
     double query_pt[3] = {qi.x, qi.y, qi.z};
     size_t nearestIdx = 0;

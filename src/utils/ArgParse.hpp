@@ -32,6 +32,17 @@ constexpr const char *USAGE_MSG =
     "(0.25-64 um, factor 2).\n"
     "  -S <factor>                      Multiply SWC coordinates by <factor> on load\n"
     "                                   (e.g. 0.001 converts nm to um; default: 1).\n"
+    "  -b<N>n | -b<P>g                  Output only the best-scoring pairs: the top N\n"
+    "                                   pairs (e.g. -b10n) or the top P percent\n"
+    "                                   (e.g. -b10g = top 10%). Sorted by score,\n"
+    "                                   descending. All-by-all counts each unordered\n"
+    "                                   pair once and skips self-pairs.\n"
+    "  -b<K>q                           With -a: compare every query neuron against every\n"
+    "                                   target neuron (-i <query_dir>,<target_dir>) and\n"
+    "                                   keep the top K targets for each query. Query IDs\n"
+    "                                   come from stdin (all of query_dir if empty).\n"
+    "                                   Memory stays bounded; set NBLAST_SLICE=<n> to\n"
+    "                                   change queries processed per slice (default 2000).\n"
     "  -d                               Dump intermediate files to ./out/.\n"
     "  -h                               Print this message and exit.\n";
 
@@ -46,6 +57,8 @@ enum class option_t : int {
 std::ostream &operator<<(std::ostream &out, option_t op);
 std::string optToString(option_t m);
 
+enum class BestKind : int { None, Count, Percent, PerQuery };
+
 using StringVector = std::vector<std::string>;
 struct Args {
   StringVector positionalArgs;
@@ -57,6 +70,8 @@ struct Args {
   option_t mode = option_t::DefaultMode;
   uint64_t numGeneratorIterations = 0;
   double coordScale = 1.0;
+  BestKind bestKind = BestKind::None;
+  double bestValue = 0.0; // pairs for Count, percent in (0,100] for Percent, K for PerQuery
   bool doSine = false;
   bool doDump = false;
   bool doAllByAll = false;

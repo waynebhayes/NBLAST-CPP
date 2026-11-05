@@ -7,10 +7,52 @@
 #include "utils/StringUtils.hpp"
 #include "utils/Timer.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <unordered_map>
+
+// Every query neuron vs every target neuron, keeping the top K targets per query.
+// Targets are loaded once; queries go through in slices and each slice's rows
+// are printed as soon as it finishes, so memory stays bounded and a long run
+// shows progress.
+static void runCrossTopK(const Args &a, const Matrix &mat) {
+  std::vector<std::string> queryPaths;
+  std::string id;
+  while (std::cin >> id)
+    queryPaths.push_back(filenameToPath(a.queryDatasetFilepath, id, ".swc"));
+  if (queryPaths.empty()) {
+    queryPaths = getDatasetFilepaths(a.queryDatasetFilepath);
+    std::sort(queryPaths.begin(), queryPaths.end());
+  }
+  std::vector<std::string> targetPaths = getDatasetFilepaths(a.targetDatasetFilepath);
+  std::sort(targetPaths.begin(), targetPaths.end());
+
+  size_t slice = 2000;
+  if (const char *env = std::getenv("NBLAST_SLICE"))
+    if (long v = std::atol(env); v > 0)
+      slice = (size_t)v;
+  const size_t k = (size_t)a.bestValue;
+
+  LOG_INFO("Loading %zu target neurons...", targetPaths.size());
+  std::vector<Neuron> targets = loadNeurons(targetPaths, a.coordScale);
+  std::vector<double> targetSelf = allSelfScores(mat, targets);
+
+  for (size_t s0 = 0; s0 < queryPaths.size(); s0 += slice) {
+    size_t s1 = std::min(s0 + slice, queryPaths.size());
+    std::vector<std::string> paths(queryPaths.begin() + s0, queryPaths.begin() + s1);
+    std::vector<Neuron> queries = loadNeurons(paths, a.coordScale);
+    std::vector<double> querySelf = allSelfScores(mat, queries);
+    auto hits = topKPerQuery(mat, queries, querySelf, targets, targetSelf, k);
+    for (size_t q = 0; q < queries.size(); ++q)
+      for (const Hit &h : hits[q])
+        std::cout << queries[q].getNID() << '\t' << targets[h.target].getNID()
+                  << '\t' << h.score << '\n';
+    std::cout.flush();
+    LOG_INFO("Queries done: %zu / %zu", s1, queryPaths.size());
+  }
+}
 
 void runQueryMode(const Args &a) {
   LOG_INFO("Using Scoring Matrix: \"%s\"", a.matrixFilepath.c_str());
@@ -18,6 +60,10 @@ void runQueryMode(const Args &a) {
   Matrix mat = loadMatrixFromTSV(a.matrixFilepath);
   mat.setInterpolate(a.doInterpolation);
   TimerStats ts;
+  if (a.bestKind == BestKind::PerQuery) {
+    runCrossTopK(a, mat);
+    return;
+  }
   if (a.positionalArgs.empty()) {
     if (a.doAllByAll) {
       std::vector<std::string> neuronFilepaths;
@@ -32,7 +78,10 @@ void runQueryMode(const Args &a) {
       auto t0 = std::chrono::steady_clock::now();
       std::vector<Neuron> neurons = loadNeurons(neuronFilepaths, a.coordScale);
       auto t1 = std::chrono::steady_clock::now();
-      std::vector<Score> scoreVector = allByAll(mat, neurons);
+      std::vector<Score> scoreVector =
+          a.bestKind != BestKind::None
+              ? allByAllBest(mat, neurons, a.bestKind, a.bestValue)
+              : allByAll(mat, neurons);
       auto t2 = std::chrono::steady_clock::now();
       if (timing) {
         std::cerr << "TIMING\tprep\t"
@@ -64,7 +113,11 @@ void runQueryMode(const Args &a) {
       }
       std::vector<Neuron> neurons = loadNeurons(neuronFilepaths, a.coordScale);
       std::vector<Score> scoreVector =
-          timeFunction(ts, [&]() { return queryPairs(mat, neurons, pairs); });
+          timeFunction(ts, [&]() {
+            return a.bestKind != BestKind::None
+                       ? queryPairsBest(mat, neurons, pairs, a.bestKind, a.bestValue)
+                       : queryPairs(mat, neurons, pairs);
+          });
 
       for (const Score &s : scoreVector) {
         s.print(std::cout, "\t");
@@ -93,6 +146,8 @@ void runQueryMode(const Args &a) {
   for (size_t j = 0; j < targetNeurons.size(); j++) {
     scoreVector.push_back(query(mat, queryNeuron, targetNeurons[j]));
   }
+  if (a.bestKind != BestKind::None)
+    keepBest(scoreVector, a.bestKind, a.bestValue);
   for (const Score &s : scoreVector) {
     s.print(std::cout, "\t");
   }

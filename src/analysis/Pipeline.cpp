@@ -4,7 +4,10 @@
 #include "utils/ArgParse.hpp"
 #include "utils/Logging.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <parallel/algorithm>
+#include <omp.h>
 #include <limits>
 #include <string>
 
@@ -19,7 +22,7 @@ Score query(const Matrix &mat, const Neuron &query, const Neuron &target) {
 }
 
 // Self-scores for every neuron; each is independent so this parallelises trivially.
-static std::vector<double> allSelfScores(const Matrix &mat,
+std::vector<double> allSelfScores(const Matrix &mat,
                                          const std::vector<Neuron> &neurons) {
   std::vector<double> selfScores(neurons.size());
 #pragma omp parallel for schedule(dynamic)
@@ -81,6 +84,155 @@ std::vector<Score> queryPairs(const Matrix &mat,
               neurons[i].score(neurons[j], mat, selfScores[i], selfScores[j])};
   }
   return out;
+}
+
+// Scores every (i,j) in pairs; self-scores computed once per neuron used.
+static std::vector<double>
+scorePairs(const Matrix &mat, const std::vector<Neuron> &neurons,
+           const std::vector<std::pair<size_t, size_t>> &pairs) {
+  std::vector<char> used(neurons.size(), 0);
+  for (const auto &p : pairs)
+    used[p.first] = used[p.second] = 1;
+  std::vector<double> selfScores(neurons.size(), 0.0);
+#pragma omp parallel for schedule(dynamic)
+  for (long i = 0; i < (long)neurons.size(); ++i)
+    if (used[i])
+      selfScores[i] = neurons[i].selfScore(mat);
+
+  std::vector<double> out(pairs.size());
+#pragma omp parallel for schedule(dynamic, 16)
+  for (long k = 0; k < (long)pairs.size(); ++k) {
+    size_t i = pairs[k].first, j = pairs[k].second;
+    out[k] = neurons[i].score(neurons[j], mat, selfScores[i], selfScores[j]);
+  }
+  return out;
+}
+
+static size_t bestCount(size_t total, BestKind kind, double value) {
+  if (total == 0)
+    return 0;
+  size_t k;
+  if (kind == BestKind::Percent)
+    k = (size_t)std::ceil((double)total * value / 100.0);
+  else
+    k = value >= (double)total ? total : (size_t)value;
+  return std::clamp<size_t>(k, 1, total);
+}
+
+// Indices of the k highest scores, ordered by score desc then index asc.
+// The k-th value is found with a parallel nth_element; everything strictly above
+// it is gathered by per-thread scans, and ties at the threshold fill the
+// remainder in index order. Deterministic regardless of thread count.
+static std::vector<size_t> topIndices(const std::vector<double> &scores, size_t k) {
+  const size_t m = scores.size();
+  std::vector<size_t> sel;
+  if (k == 0)
+    return sel;
+  double thr;
+  if (k >= m) {
+    thr = -std::numeric_limits<double>::infinity();
+  } else {
+    std::vector<double> tmp(scores);
+    __gnu_parallel::nth_element(tmp.begin(), tmp.begin() + (k - 1), tmp.end(),
+                                std::greater<double>());
+    thr = tmp[k - 1];
+  }
+
+  std::vector<std::vector<size_t>> local(omp_get_max_threads());
+#pragma omp parallel
+  {
+    auto &mine = local[omp_get_thread_num()];
+#pragma omp for schedule(static)
+    for (long i = 0; i < (long)m; ++i)
+      if (scores[i] > thr)
+        mine.push_back(i);
+  }
+  for (auto &v : local)
+    sel.insert(sel.end(), v.begin(), v.end());
+  for (size_t i = 0; i < m && sel.size() < k; ++i)
+    if (scores[i] == thr)
+      sel.push_back(i);
+
+  __gnu_parallel::sort(sel.begin(), sel.end(), [&](size_t a, size_t b) {
+    return scores[a] != scores[b] ? scores[a] > scores[b] : a < b;
+  });
+  return sel;
+}
+
+std::vector<Score> queryPairsBest(const Matrix &mat,
+                                  const std::vector<Neuron> &neurons,
+                                  const std::vector<std::pair<size_t, size_t>> &pairs,
+                                  BestKind kind, double value) {
+  std::vector<double> scores = scorePairs(mat, neurons, pairs);
+  std::vector<size_t> sel = topIndices(scores, bestCount(scores.size(), kind, value));
+  std::vector<Score> out;
+  out.reserve(sel.size());
+  for (size_t k : sel)
+    out.push_back({neurons[pairs[k].first].getNID(),
+                   neurons[pairs[k].second].getNID(), scores[k]});
+  return out;
+}
+
+std::vector<Score> allByAllBest(const Matrix &mat,
+                                const std::vector<Neuron> &neurons,
+                                BestKind kind, double value) {
+  const size_t n = neurons.size();
+  std::vector<std::pair<size_t, size_t>> upper;
+  upper.reserve(n * (n - 1) / 2);
+  for (size_t i = 0; i < n; ++i)
+    for (size_t j = i + 1; j < n; ++j)
+      upper.emplace_back(i, j);
+  return queryPairsBest(mat, neurons, upper, kind, value);
+}
+
+std::vector<std::vector<Hit>>
+topKPerQuery(const Matrix &mat, const std::vector<Neuron> &queries,
+             const std::vector<double> &querySelf,
+             const std::vector<Neuron> &targets,
+             const std::vector<double> &targetSelf, size_t k) {
+  std::vector<std::vector<Hit>> heaps(queries.size());
+  if (k == 0)
+    return heaps;
+  // heap top = worst kept hit
+  auto better = [](const Hit &a, const Hit &b) {
+    return a.score != b.score ? a.score > b.score : a.target < b.target;
+  };
+  // targets are walked in blocks so a block's KD-trees stay cache-resident
+  // while every query is scored against it
+  constexpr size_t BLOCK = 2048;
+  for (size_t t0 = 0; t0 < targets.size(); t0 += BLOCK) {
+    const size_t t1 = std::min(t0 + BLOCK, targets.size());
+#pragma omp parallel for schedule(dynamic)
+    for (long q = 0; q < (long)queries.size(); ++q) {
+      auto &heap = heaps[q];
+      for (size_t t = t0; t < t1; ++t) {
+        Hit h{t, queries[q].score(targets[t], mat, querySelf[q], targetSelf[t])};
+        if (heap.size() < k) {
+          heap.push_back(h);
+          std::push_heap(heap.begin(), heap.end(), better);
+        } else if (better(h, heap.front())) {
+          std::pop_heap(heap.begin(), heap.end(), better);
+          heap.back() = h;
+          std::push_heap(heap.begin(), heap.end(), better);
+        }
+      }
+    }
+  }
+  for (auto &heap : heaps)
+    std::sort(heap.begin(), heap.end(), better);
+  return heaps;
+}
+
+void keepBest(std::vector<Score> &scores, BestKind kind, double value) {
+  std::vector<double> v(scores.size());
+  for (size_t i = 0; i < scores.size(); ++i)
+    v[i] = scores[i].score;
+  std::vector<size_t> sel = topIndices(v, bestCount(v.size(), kind, value));
+  std::vector<Score> out;
+  out.reserve(sel.size());
+  for (size_t k : sel)
+    out.push_back(std::move(scores[k]));
+  scores = std::move(out);
 }
 
 std::vector<PAVector> calcDistsDotprods(const std::vector<Neuron> &queryNeurons,

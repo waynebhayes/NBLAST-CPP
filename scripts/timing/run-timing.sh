@@ -39,7 +39,11 @@ RESULTS="$OUT_DIR/timings.tsv"
 IDS="$OUT_DIR/ids.txt"
 MAXN=$(printf '%s\n' $SIZES | sort -n | tail -1)
 
-make -C "$REPO_ROOT" release >/dev/null
+# NBLAST_BIN: use a prebuilt binary (e.g. a per-host build) instead of building the shared one
+if [[ -z "${NBLAST_BIN:-}" ]]; then
+  make -C "$REPO_ROOT" release >/dev/null
+  NBLAST_BIN="$REPO_ROOT/nblast++"
+fi
 find "$SWC_DIR" -name '*.swc' -printf '%f\n' | sed 's/\.swc$//' | sort \
   | shuf -n "$MAXN" --random-source=<(yes "$SEED") > "$IDS"
 
@@ -58,7 +62,7 @@ for n in $SIZES; do
         if [[ $t -eq 1 ]]; then cpus="$CORE"; else cpus="0-$((t - 1))"; fi
         label="nblast++($t)"
         start=$(date +%s.%N)
-        NBLAST_TIMING=1 OMP_NUM_THREADS=$t taskset -c "$cpus" "$REPO_ROOT/nblast++" -q "$SMAT" -i "$SWC_DIR" -a \
+        NBLAST_TIMING=1 OMP_NUM_THREADS=$t taskset -c "$cpus" "$NBLAST_BIN" -q "$SMAT" -i "$SWC_DIR" -a \
           < "$OUT_DIR/ids_$n.txt" 2> "$OUT_DIR/cpp_err.tmp" > /dev/null
         total=$(echo "$(date +%s.%N) - $start" | bc -l)
         while IFS=$'\t' read -r _ phase secs; do
