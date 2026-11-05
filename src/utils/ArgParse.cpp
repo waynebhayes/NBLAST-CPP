@@ -2,6 +2,7 @@
 #include "StringUtils.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <unistd.h>
@@ -54,6 +55,9 @@ std::ostream &operator<<(std::ostream &out, const Args &a) {
       << "targetDatasetFilepath: " << a.targetDatasetFilepath << '\n'
       << "mode: " << a.mode << '\n'
       << "numGeneratorIterations: " << a.numGeneratorIterations << '\n'
+      << "coordScale: " << a.coordScale << '\n'
+      << "bestKind: " << static_cast<int>(a.bestKind) << '\n'
+      << "bestValue: " << a.bestValue << '\n'
       << "doSine: " << a.doSine << '\n'
       << "doDump: " << a.doDump << '\n'
       << "doAllByAll: " << a.doAllByAll << '\n'
@@ -79,7 +83,7 @@ Args parseArgs(int argc, char *argv[]) {
   Args a;
   int opt = 0;
   bool optIProvided = false;
-  while ((opt = getopt(argc, argv, ":hq:g:i:o:sdaIrl")) != -1) {
+  while ((opt = getopt(argc, argv, ":hq:g:i:o:S:b:sdaIrl")) != -1) {
     switch (opt) {
     // print usage
     case 'h': {
@@ -146,6 +150,55 @@ Args parseArgs(int argc, char *argv[]) {
       }
       break;
     }
+    case 'S': {
+      size_t pos = 0;
+      double scale = 0.0;
+      try {
+        scale = std::stod(optarg, &pos);
+      } catch (const std::exception &) {
+        pos = 0;
+      }
+      if (pos == 0 || optarg[pos] != '\0' || !(scale > 0.0)) {
+        throw std::runtime_error("argument for -S must be a positive number");
+      }
+      a.coordScale = scale;
+      break;
+    }
+    // best-scoring pairs only: <N>n (top N pairs) or <P>g (top P percent)
+    case 'b': {
+      std::string arg = optarg;
+      if (arg.size() < 2) {
+        throw std::runtime_error("argument for -b must look like 10n or 10g");
+      }
+      char suffix = arg.back();
+      std::string num = arg.substr(0, arg.size() - 1);
+      size_t pos = 0;
+      double v = 0.0;
+      try {
+        v = std::stod(num, &pos);
+      } catch (const std::exception &) {
+        pos = 0;
+      }
+      if (pos == 0 || pos != num.size() || !(v > 0.0)) {
+        throw std::runtime_error("argument for -b needs a positive number");
+      }
+      if (suffix == 'n' || suffix == 'q') {
+        if (v != std::floor(v) || v > 1e18) {
+          throw std::runtime_error(std::string("-b<N>") + suffix +
+                                   " requires a whole number N");
+        }
+        a.bestKind = suffix == 'n' ? BestKind::Count : BestKind::PerQuery;
+      } else if (suffix == 'g') {
+        if (v > 100.0) {
+          throw std::runtime_error("-b<P>g requires 0 < P <= 100");
+        }
+        a.bestKind = BestKind::Percent;
+      } else {
+        throw std::runtime_error("-b must end in 'n' (count), 'g' (percent) or 'q' (per query)");
+      }
+      a.bestValue = v;
+      break;
+    }
     case 'o': {
       a.matrixOutfile = optarg;
       break;
@@ -195,6 +248,12 @@ Args parseArgs(int argc, char *argv[]) {
         "The -g option requires -i to specify query and target datasets.");
   } else if (a.mode != option_t::Query && a.doAllByAll) {
     throw std::runtime_error("The -a flag is for QUERY mode");
+  }
+  if (a.bestKind != BestKind::None && a.mode != option_t::Query) {
+    throw std::runtime_error("The -b option is for QUERY mode");
+  }
+  if (a.bestKind == BestKind::PerQuery && !a.doAllByAll) {
+    throw std::runtime_error("The -b<K>q option requires -a");
   }
   for (int i = optind; i < argc; ++i) {
     a.positionalArgs.push_back(argv[i]);

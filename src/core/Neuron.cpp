@@ -7,9 +7,9 @@
 #include <unordered_map>
 #include <vector>
 
-Neuron::Neuron(const std::string &filepath) {
+Neuron::Neuron(const std::string &filepath, double coordScale) {
   basenameNoExt(filepath, nid);
-  pVector = loadPoints(filepath);
+  pVector = loadPoints(filepath, coordScale);
   for (int i = 0; i < (int)pVector.size(); ++i) {
     idToIndex[pVector[i].id] = i;
   }
@@ -41,6 +41,9 @@ PAVector Neuron::nearestNeighbors(const Neuron &target, bool doSine,
                                   bool doPrint) const {
   PAVector matchVector;
   matchVector.reserve(this->mpVector->size());
+  // a target with no segments has nothing to match against
+  if (target.mpVector->empty())
+    return matchVector;
   // For each query midpoint, perform nearest neighbor search
   for (size_t i = 0; i < this->mpVector->size(); ++i) {
     const Point &qi = (*this->mpVector)[i];
@@ -90,22 +93,53 @@ static double sumRawScores(const PAVector &vec) {
   return res;
 }
 
+// Same arithmetic as nearestNeighbors + computeRawScores + sumRawScores (same
+// summation order, so results are bit-identical) but without materialising the
+// per-segment match vector. Distances and angle measures are non-negative by
+// construction, so the validity check in computeRawScore is not needed here.
+double Neuron::directedScore(const Neuron &target, const Matrix &mat,
+                             bool doSine) const {
+  double total = 0;
+  const std::vector<Point> &targetMids = *target.mpVector;
+  // a target with no segments has nothing to match against
+  if (targetMids.empty())
+    return 0;
+  for (const Point &qi : *this->mpVector) {
+    double query_pt[3] = {qi.x, qi.y, qi.z};
+    size_t nearestIdx = 0;
+    double outDistanceSqr = 0;
+    nanoflann::KNNResultSet<double> resultSet(1);
+    resultSet.init(&nearestIdx, &outDistanceSqr);
+    target.index->findNeighbors(resultSet, query_pt,
+                                nanoflann::SearchParameters());
+    const Point &ti = targetMids[nearestIdx];
+    Point r_i(qi.id, qi.tx, qi.ty, qi.tz, -1);
+    Point s_i(ti.id, ti.tx, ti.ty, ti.tz, -1);
+    total += mat.score(std::sqrt(outDistanceSqr), r_i.angleMeasure(s_i, doSine));
+  }
+  return total;
+}
+
 double Neuron::selfScore(const Matrix &mat, bool doSine) const {
-  PAVector v = this->nearestNeighbors(*this, doSine);
-  computeRawScores(mat, v);
-  return sumRawScores(v);
+  return directedScore(*this, mat, doSine);
 }
 
 double Neuron::score(const Neuron &target, const Matrix &mat,
                      double querySelf, double targetSelf,
                      bool doSine, bool doPrint) const {
-  PAVector forwardMatchVector = this->nearestNeighbors(target, doSine, doPrint);
-  computeRawScores(mat, forwardMatchVector);
-  double forwardTotal = sumRawScores(forwardMatchVector);
+  double forwardTotal, reverseTotal;
+  if (doPrint) {
+    PAVector forwardMatchVector = this->nearestNeighbors(target, doSine, doPrint);
+    computeRawScores(mat, forwardMatchVector);
+    forwardTotal = sumRawScores(forwardMatchVector);
 
-  PAVector reverseMatchVector = target.nearestNeighbors(*this, doSine, doPrint);
-  computeRawScores(mat, reverseMatchVector);
-  double reverseTotal = sumRawScores(reverseMatchVector);
+    PAVector reverseMatchVector = target.nearestNeighbors(*this, doSine, doPrint);
+    computeRawScores(mat, reverseMatchVector);
+    reverseTotal = sumRawScores(reverseMatchVector);
+  } else {
+    forwardTotal = directedScore(target, mat, doSine);
+    reverseTotal = target.directedScore(*this, mat, doSine);
+  }
 
   double normalizedForward = (querySelf != 0) ? (forwardTotal / querySelf) : 0;
   double normalizedReverse = (targetSelf != 0) ? (reverseTotal / targetSelf) : 0;

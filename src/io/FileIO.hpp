@@ -8,11 +8,12 @@
 #include <string>
 #include <vector>
 
-PointVector loadPoints(const std::string &filepath);
+PointVector loadPoints(const std::string &filepath, double coordScale = 1.0);
 Matrix loadMatrixFromTSV(const std::string &filepath);
 
 std::vector<Neuron>
-loadNeurons(const std::vector<std::string> &neuronFilepaths);
+loadNeurons(const std::vector<std::string> &neuronFilepaths,
+            double coordScale = 1.0);
 
 void ensureDirectory(const std::string &path);
 

@@ -12,6 +12,9 @@ obj
 out
 exp
 log
+*.log
+*.d
+*_new.tsv
 
 # executables
 nblast++

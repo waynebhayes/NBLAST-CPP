@@ -13,7 +13,7 @@ typedef nanoflann::KDTreeSingleIndexAdaptor<
 
 class Neuron {
 public:
-  Neuron(const std::string &filename);
+  Neuron(const std::string &filename, double coordScale = 1.0);
   Neuron(Neuron &&) = default;
   Neuron(const Neuron &) = delete;
   Neuron &operator=(Neuron &&) = default;
@@ -22,6 +22,9 @@ public:
   std::string getNID(void) const { return nid; }
   PAVector nearestNeighbors(const Neuron &target, bool doSine = false,
                             bool doPrint = false) const;
+  // sum of match scores of this neuron's segments against target (no normalisation)
+  double directedScore(const Neuron &target, const Matrix &mat,
+                       bool doSine = false) const;
   double selfScore(const Matrix &mat, bool doSine = false) const;
   double score(const Neuron &target, const Matrix &mat,
                double querySelf, double targetSelf,

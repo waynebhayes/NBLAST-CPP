@@ -2,6 +2,7 @@
 CXX := g++
 STD := -std=c++20
 WARN := -Wall -Wextra -Wpedantic
+OMP := -fopenmp
 
 # ==================== targets ====================
 BUILD_TARGET := nblast++
@@ -14,10 +15,10 @@ TEST_SRC := $(wildcard unit-tests/*.cpp)
 BUILD ?= release
 
 ifeq ($(BUILD),debug)
-    CXXFLAGS := $(STD) $(WARN) -g -Og -DDEBUG -DLOG -MMD -MP
+    CXXFLAGS := $(STD) $(WARN) $(OMP) -g -Og -DDEBUG -DLOG -MMD -MP
     OBJ_DIR := obj/debug
 else
-    CXXFLAGS := $(STD) $(WARN) -O2 -DNDEBUG -MMD -MP
+    CXXFLAGS := $(STD) $(WARN) $(OMP) -O2 -DNDEBUG -MMD -MP
     OBJ_DIR := obj/release
 endif
 

@@ -7,84 +7,73 @@ suppressPackageStartupMessages({
 })
 
 args <- commandArgs(trailingOnly = TRUE)
-query_swc_dir   <- if (length(args) >= 1) args[1] else stop("Usage: query-r.R <query_dir> <target_dir> <pairs_file> <smat_file> <output_file>")
+query_swc_dir   <- if (length(args) >= 1) args[1] else stop("Usage: query-r.R <query_dir> <target_dir> <pairs_file> <smat_file> <output_file> [cache_dir]")
 target_swc_dir  <- if (length(args) >= 2) args[2] else query_swc_dir
 pairs_file      <- if (length(args) >= 3) args[3] else stop("pairs_file required")
 smat_file       <- if (length(args) >= 4) args[4] else "smat.rda"
 output_file     <- if (length(args) >= 5) args[5] else "out/r-query-out.tsv"
-q_neurons_cache <- if (length(args) >= 6) args[6] else "query-neurons-cache.rda"
-q_dp_cache      <- if (length(args) >= 7) args[7] else "query-dp-cache.rda"
-t_neurons_cache <- if (length(args) >= 8) args[8] else "target-neurons-cache.rda"
-t_dp_cache      <- if (length(args) >= 9) args[9] else "target-dp-cache.rda"
+# dotprops are cached here, keyed by (directory, set of neuron IDs), so changing
+# the pairs file can never serve stale data. Use "none" to disable caching.
+cache_dir       <- if (length(args) >= 6) args[6] else file.path(Sys.getenv("HOME"), ".cache", "nblast-cpp-r")
 
 cat("Query dataset:  ", query_swc_dir, "\n")
 cat("Target dataset: ", target_swc_dir, "\n")
 cat("Pairs file:     ", pairs_file, "\n")
 cat("Scoring matrix: ", smat_file, "\n")
 cat("Output:         ", output_file, "\n")
+cat("Cache dir:      ", cache_dir, "\n")
 
 same_dir <- normalizePath(query_swc_dir) == normalizePath(target_swc_dir)
 
-# ── Load query neurons ────────────────────────────────────────────────────────
+# ── Read and filter pairs (first, so only the neurons we need get loaded) ─────
 
-if (file.exists(q_neurons_cache)) {
-  cat("Loading cached query neurons from", q_neurons_cache, "...\n")
-  load(q_neurons_cache)
-} else {
-  cat("Reading query neurons from", query_swc_dir, "...\n")
-  t_load <- system.time(
-    query_neuronlist <- read.neurons(query_swc_dir, pattern = "\\.swc$", format = "swc")
-  )
-  cat(sprintf("Loaded %d query neurons in %.1fs\n", length(query_neuronlist), t_load["elapsed"]))
-  save(query_neuronlist, file = q_neurons_cache)
+pairs <- read.table(pairs_file, header = FALSE, sep = "",
+                    col.names = c("neuron1", "neuron2"),
+                    stringsAsFactors = FALSE, fill = TRUE)
+pairs <- pairs[!is.na(pairs$neuron1) & pairs$neuron1 != "NA" &
+               !is.na(pairs$neuron2) & pairs$neuron2 != "NA", ]
+cat(sprintf("Pairs to score: %d\n", nrow(pairs)))
+
+# ── Load neurons + compute dotprops for only the IDs in the pairs ─────────────
+
+load_dotprops <- function(swc_dir, ids, label) {
+  ids <- sort(unique(ids))
+  files <- file.path(swc_dir, paste0(ids, ".swc"))
+  keep <- file.exists(files)
+  ids <- ids[keep]; files <- files[keep]
+
+  cache_file <- NULL
+  if (cache_dir != "none") {
+    dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+    key_file <- tempfile()
+    writeLines(c(normalizePath(swc_dir), ids), key_file)
+    cache_file <- file.path(cache_dir, paste0("dp-", unname(tools::md5sum(key_file)), ".rda"))
+    unlink(key_file)
+    if (file.exists(cache_file)) {
+      cat(sprintf("Loading cached %s dotprops (%d neurons) from %s\n", label, length(ids), cache_file))
+      load(cache_file)  # -> dps
+      return(dps)
+    }
+  }
+
+  cat(sprintf("Reading %d %s neurons from %s ...\n", length(ids), label, swc_dir))
+  t_load <- system.time(nl <- read.neurons(files, format = "swc"))
+  names(nl) <- ids
+  cat(sprintf("  loaded in %.1fs\n", t_load["elapsed"]))
+  cat(sprintf("Computing %s dotprops (k=5)...\n", label))
+  t_dp <- system.time(dps <- dotprops(nl, k = 5))
+  cat(sprintf("  computed in %.1fs\n", t_dp["elapsed"]))
+  if (!is.null(cache_file)) save(dps, file = cache_file)
+  dps
 }
-
-# ── Load target neurons ───────────────────────────────────────────────────────
 
 if (same_dir) {
-  cat("Target dataset is the same as query — reusing neurons.\n")
-  target_neuronlist <- query_neuronlist
-} else if (file.exists(t_neurons_cache)) {
-  cat("Loading cached target neurons from", t_neurons_cache, "...\n")
-  load(t_neurons_cache)
-} else {
-  cat("Reading target neurons from", target_swc_dir, "...\n")
-  t_load <- system.time(
-    target_neuronlist <- read.neurons(target_swc_dir, pattern = "\\.swc$", format = "swc")
-  )
-  cat(sprintf("Loaded %d target neurons in %.1fs\n", length(target_neuronlist), t_load["elapsed"]))
-  save(target_neuronlist, file = t_neurons_cache)
-}
-
-# ── Compute query dotprops ────────────────────────────────────────────────────
-
-if (file.exists(q_dp_cache)) {
-  cat("Loading cached query dotprops from", q_dp_cache, "...\n")
-  load(q_dp_cache)
-} else {
-  cat("Computing query dotprops (k=5)...\n")
-  t_dp <- system.time(
-    query_dps <- dotprops(query_neuronlist, k = 5)
-  )
-  cat(sprintf("Computed query dotprops in %.1fs\n", t_dp["elapsed"]))
-  save(query_dps, file = q_dp_cache)
-}
-
-# ── Compute target dotprops ───────────────────────────────────────────────────
-
-if (same_dir) {
-  cat("Target dotprops same as query — reusing.\n")
+  # one set covering both columns, so neurons shared between them load once
+  query_dps <- load_dotprops(query_swc_dir, c(pairs$neuron1, pairs$neuron2), "query+target")
   target_dps <- query_dps
-} else if (file.exists(t_dp_cache)) {
-  cat("Loading cached target dotprops from", t_dp_cache, "...\n")
-  load(t_dp_cache)
 } else {
-  cat("Computing target dotprops (k=5)...\n")
-  t_dp <- system.time(
-    target_dps <- dotprops(target_neuronlist, k = 5)
-  )
-  cat(sprintf("Computed target dotprops in %.1fs\n", t_dp["elapsed"]))
-  save(target_dps, file = t_dp_cache)
+  query_dps <- load_dotprops(query_swc_dir, pairs$neuron1, "query")
+  target_dps <- load_dotprops(target_swc_dir, pairs$neuron2, "target")
 }
 
 cat(sprintf("Query neurons:  %d\n", length(query_dps)))
@@ -107,15 +96,6 @@ if (grepl("\\.(rda|Rda|RData)$", smat_file, ignore.case = TRUE)) {
   class(smat) <- c("scoringmatrix", "table")
 }
 cat("Loaded scoring matrix.\n")
-
-# ── Read and filter pairs ─────────────────────────────────────────────────────
-
-pairs <- read.table(pairs_file, header = FALSE, sep = "",
-                    col.names = c("neuron1", "neuron2"),
-                    stringsAsFactors = FALSE, fill = TRUE)
-pairs <- pairs[!is.na(pairs$neuron1) & pairs$neuron1 != "NA" &
-               !is.na(pairs$neuron2) & pairs$neuron2 != "NA", ]
-cat(sprintf("Pairs to score: %d\n", nrow(pairs)))
 
 # ── Score pairs ───────────────────────────────────────────────────────────────
 
