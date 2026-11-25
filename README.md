@@ -40,6 +40,8 @@ time.
   between a point and its parent). The original estimates it from the 5 nearest
   neighbors (`dotprops(k = 5)`).
 - Segments are represented by their midpoints.
+- Alpha (`-A k`) is computed from the `k` nearest segment midpoints, as
+  `nat::dotprops(k)` does from its points.
 - Distance bins can be generated from data (geometric series), or you can use
   R's bins (`-r`) or log bins (`-l`). Optional interpolation between bins is `-I`.
 
@@ -85,6 +87,7 @@ nblast++ -g KnownMatchesFile,NumIters -i QueryDir,TargetDir [-o out.tsv] [-r | -
 | `-I` | interpolate between matrix bins |
 | `-r` / `-l` | use R's bins / log bins when generating a matrix |
 | `-S factor` | multiply SWC coordinates by `factor` on load (`0.001` converts nm to µm) |
+| `-A k` | weight matches by alpha (NBLAST v2, `UseAlpha` in R), from the `k` nearest segments; use with an alpha matrix |
 | `-d` | dump intermediate counts and timing to `out/` |
 | `-h` | usage |
 
@@ -106,6 +109,7 @@ regression-tests/  comparisons against R nat.nblast
   0-sanity/        all-by-all on 20 FlyCircuit traces (run by run-tests.sh)
   1-random/        10,000 random pairs, C++ vs R
   2-matrix/        matrix trained by C++ vs matrix trained by R
+  3-alpha/         all-by-all with -A 20 on fctraces20 (run by run-tests.sh)
 scripts/
   matrix-generating/  generate a matrix with C++ or R
   querying/           score pairs with C++ or R

@@ -13,7 +13,7 @@ Matrix loadMatrixFromTSV(const std::string &filepath);
 
 std::vector<Neuron>
 loadNeurons(const std::vector<std::string> &neuronFilepaths,
-            double coordScale = 1.0);
+            double coordScale = 1.0, int alphaK = 0);
 
 void ensureDirectory(const std::string &path);
 

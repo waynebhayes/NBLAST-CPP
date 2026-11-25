@@ -65,7 +65,8 @@ using DoubleVector = std::vector<double>;
 std::pair<DoubleVector, DoubleVector> generateBins(
     StringVector queryFilepathVector, StringVector targetFilepathVector,
     StringVector knownMatchesQueryVector, StringVector knownMatchesTargetVector,
-    double binFactor, unsigned numIters, double coordScale = 1.0);
+    double binFactor, unsigned numIters, double coordScale = 1.0,
+    int alphaK = 0);
 
 Matrix calcScoreMatrix(const Matrix &matchProb, const Matrix &randProb,
                        double logbase = 2.0, double epsilon = 1e-6);

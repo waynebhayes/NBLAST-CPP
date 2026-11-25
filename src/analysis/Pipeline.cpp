@@ -269,7 +269,7 @@ void updateMatrixWithResults(Matrix &mat, const std::vector<PAVector> &results) 
 std::pair<DoubleVector, DoubleVector> generateBins(
     StringVector queryFilepathVector, StringVector targetFilepathVector,
     StringVector knownMatchesQueryVector, StringVector knownMatchesTargetVector,
-    double binFactor, unsigned numIters, double coordScale) {
+    double binFactor, unsigned numIters, double coordScale, int alphaK) {
   if (binFactor <= 1.0) {
     throw std::runtime_error("binFactor must be > 1.0");
   } else if (numIters == 0) {
@@ -281,8 +281,8 @@ std::pair<DoubleVector, DoubleVector> generateBins(
   // Use all known matches for range estimation
   LOG_INFO("Sampling known match pairs for binning...");
   for (size_t i = 0; i < knownMatchesQueryVector.size(); ++i) {
-    Neuron query = Neuron(knownMatchesQueryVector[i], coordScale);
-    Neuron target = Neuron(knownMatchesTargetVector[i], coordScale);
+    Neuron query = Neuron(knownMatchesQueryVector[i], coordScale, alphaK);
+    Neuron target = Neuron(knownMatchesTargetVector[i], coordScale, alphaK);
     PAVector matchVector = query.nearestNeighbors(target);
     samples.insert(samples.end(), matchVector.begin(), matchVector.end());
   }
@@ -293,8 +293,8 @@ std::pair<DoubleVector, DoubleVector> generateBins(
     uint64_t qi = queryFilepathVector.size() * drand48();
     uint64_t ti = targetFilepathVector.size() * drand48();
 
-    Neuron query = Neuron(queryFilepathVector[qi], coordScale);
-    Neuron target = Neuron(targetFilepathVector[ti], coordScale);
+    Neuron query = Neuron(queryFilepathVector[qi], coordScale, alphaK);
+    Neuron target = Neuron(targetFilepathVector[ti], coordScale, alphaK);
     PAVector matchVector = query.nearestNeighbors(target);
     samples.insert(samples.end(), matchVector.begin(), matchVector.end());
   }
