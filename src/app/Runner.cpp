@@ -36,13 +36,14 @@ static void runCrossTopK(const Args &a, const Matrix &mat) {
   const size_t k = (size_t)a.bestValue;
 
   LOG_INFO("Loading %zu target neurons...", targetPaths.size());
-  std::vector<Neuron> targets = loadNeurons(targetPaths, a.coordScale);
+  std::vector<Neuron> targets =
+      loadNeurons(targetPaths, a.coordScale, a.alphaK);
   std::vector<double> targetSelf = allSelfScores(mat, targets);
 
   for (size_t s0 = 0; s0 < queryPaths.size(); s0 += slice) {
     size_t s1 = std::min(s0 + slice, queryPaths.size());
     std::vector<std::string> paths(queryPaths.begin() + s0, queryPaths.begin() + s1);
-    std::vector<Neuron> queries = loadNeurons(paths, a.coordScale);
+    std::vector<Neuron> queries = loadNeurons(paths, a.coordScale, a.alphaK);
     std::vector<double> querySelf = allSelfScores(mat, queries);
     auto hits = topKPerQuery(mat, queries, querySelf, targets, targetSelf, k);
     for (size_t q = 0; q < queries.size(); ++q)
@@ -76,7 +77,8 @@ void runQueryMode(const Args &a) {
       // phase timings go to stderr when NBLAST_TIMING is set (see scripts/timing)
       const bool timing = std::getenv("NBLAST_TIMING") != nullptr;
       auto t0 = std::chrono::steady_clock::now();
-      std::vector<Neuron> neurons = loadNeurons(neuronFilepaths, a.coordScale);
+      std::vector<Neuron> neurons =
+          loadNeurons(neuronFilepaths, a.coordScale, a.alphaK);
       auto t1 = std::chrono::steady_clock::now();
       std::vector<Score> scoreVector =
           a.bestKind != BestKind::None
@@ -111,7 +113,8 @@ void runQueryMode(const Args &a) {
         size_t ti = intern(filenameToPath(a.targetDatasetFilepath, targetID, ".swc"));
         pairs.emplace_back(qi, ti);
       }
-      std::vector<Neuron> neurons = loadNeurons(neuronFilepaths, a.coordScale);
+      std::vector<Neuron> neurons =
+          loadNeurons(neuronFilepaths, a.coordScale, a.alphaK);
       std::vector<Score> scoreVector =
           timeFunction(ts, [&]() {
             return a.bestKind != BestKind::None
@@ -133,14 +136,15 @@ void runQueryMode(const Args &a) {
   }
   std::string queryFilepath =
       filenameToPath(a.queryDatasetFilepath, a.positionalArgs[0], ".swc");
-  Neuron queryNeuron = Neuron(queryFilepath, a.coordScale);
+  Neuron queryNeuron = Neuron(queryFilepath, a.coordScale, a.alphaK);
   std::vector<std::string> targetFilepaths;
   for (size_t i = 1; i < a.positionalArgs.size(); i++) {
     std::string targetFilepath =
         filenameToPath(a.targetDatasetFilepath, a.positionalArgs[i], ".swc");
     targetFilepaths.push_back(targetFilepath);
   }
-  std::vector<Neuron> targetNeurons = loadNeurons(targetFilepaths, a.coordScale);
+  std::vector<Neuron> targetNeurons =
+      loadNeurons(targetFilepaths, a.coordScale, a.alphaK);
   std::vector<Score> scoreVector;
   scoreVector.reserve(targetNeurons.size());
   for (size_t j = 0; j < targetNeurons.size(); j++) {
@@ -176,13 +180,17 @@ void runGeneratorMode(const Args &a) {
             knownMatchesQueryVector.size(), knownMatchesTargetVector.size());
 
   LOG_INFO("Pre-caching query neurons...");
-  std::vector<Neuron> queryNeurons = loadNeurons(queryFilepathVector, a.coordScale);
+  std::vector<Neuron> queryNeurons =
+      loadNeurons(queryFilepathVector, a.coordScale, a.alphaK);
   LOG_INFO("Pre-caching target neurons...");
-  std::vector<Neuron> targetNeurons = loadNeurons(targetFilepathVector, a.coordScale);
+  std::vector<Neuron> targetNeurons =
+      loadNeurons(targetFilepathVector, a.coordScale, a.alphaK);
 
   LOG_INFO("Pre-caching known match neurons...");
-  std::vector<Neuron> knownQueryNeurons = loadNeurons(knownMatchesQueryVector, a.coordScale);
-  std::vector<Neuron> knownTargetNeurons = loadNeurons(knownMatchesTargetVector, a.coordScale);
+  std::vector<Neuron> knownQueryNeurons =
+      loadNeurons(knownMatchesQueryVector, a.coordScale, a.alphaK);
+  std::vector<Neuron> knownTargetNeurons =
+      loadNeurons(knownMatchesTargetVector, a.coordScale, a.alphaK);
 
   DoubleVector distanceBins, angleBins;
   if (a.useLogBins) {
@@ -192,10 +200,9 @@ void runGeneratorMode(const Args &a) {
     distanceBins.assign(R_DISTANCE_BINS.begin(), R_DISTANCE_BINS.end());
     angleBins.assign(R_ANGLE_BINS.begin(), R_ANGLE_BINS.end());
   } else {
-    auto bins =
-        generateBins(queryFilepathVector, targetFilepathVector,
-                     knownMatchesQueryVector, knownMatchesTargetVector, 2, 5,
-                     a.coordScale);
+    auto bins = generateBins(queryFilepathVector, targetFilepathVector,
+                             knownMatchesQueryVector, knownMatchesTargetVector,
+                             2, 5, a.coordScale, a.alphaK);
     distanceBins = bins.first;
     angleBins = bins.second;
   }

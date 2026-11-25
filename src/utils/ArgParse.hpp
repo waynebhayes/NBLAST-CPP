@@ -32,6 +32,11 @@ constexpr const char *USAGE_MSG =
     "(0.25-64 um, factor 2).\n"
     "  -S <factor>                      Multiply SWC coordinates by <factor> on load\n"
     "                                   (e.g. 0.001 converts nm to um; default: 1).\n"
+    "  -A <k>                           Weight each match by sqrt(alpha_q * alpha_t)\n"
+    "                                   (NBLAST v2 / nat.nblast UseAlpha). Alpha is\n"
+    "                                   computed per segment from its k nearest\n"
+    "                                   segment midpoints (nat::dotprops uses k=20).\n"
+    "                                   Use with an alpha matrix (smat_alpha.fcwb).\n"
     "  -b<N>n | -b<P>g                  Output only the best-scoring pairs: the top N\n"
     "                                   pairs (e.g. -b10n) or the top P percent\n"
     "                                   (e.g. -b10g = top 10%). Sorted by score,\n"
@@ -70,6 +75,7 @@ struct Args {
   option_t mode = option_t::DefaultMode;
   uint64_t numGeneratorIterations = 0;
   double coordScale = 1.0;
+  int alphaK = 0; // 0 = no alpha weighting
   BestKind bestKind = BestKind::None;
   double bestValue = 0.0; // pairs for Count, percent in (0,100] for Percent, K for PerQuery
   bool doSine = false;

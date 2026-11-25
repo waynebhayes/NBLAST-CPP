@@ -79,14 +79,14 @@ Matrix loadMatrixFromTSV(const std::string &filepath) {
 
 std::vector<Neuron>
 loadNeurons(const std::vector<std::string> &neuronFilepaths,
-            double coordScale) {
+            double coordScale, int alphaK) {
   // parse + KD-tree build per file is independent, so load in parallel
   std::vector<std::optional<Neuron>> loaded(neuronFilepaths.size());
   std::exception_ptr failure;
 #pragma omp parallel for schedule(dynamic)
   for (long i = 0; i < (long)neuronFilepaths.size(); ++i) {
     try {
-      loaded[i].emplace(neuronFilepaths[i], coordScale);
+      loaded[i].emplace(neuronFilepaths[i], coordScale, alphaK);
     } catch (...) {
 #pragma omp critical(load_failure)
       if (!failure)

@@ -87,3 +87,66 @@ TEST_CASE(test_args_parse_sine_flag) {
 
     REQUIRE(args.doSine);
 }
+
+TEST_CASE(test_args_parse_alpha_flag) {
+    optind = 1;
+    Args args;
+
+    auto argv = make_argv({
+        "prog",
+        "-A",
+        "20",
+        "-q",
+        "matrix.tsv",
+        "-i",
+        "/tmp/test1,/tmp/test2"
+    });
+
+    int argc = argv.size() - 1;
+
+    args = parseArgs(argc, argv.data());
+
+    REQUIRE_EQ(args.alphaK, 20);
+}
+
+TEST_CASE(test_args_alpha_off_by_default) {
+    optind = 1;
+    Args args;
+
+    auto argv = make_argv({
+        "prog",
+        "-q",
+        "matrix.tsv",
+        "-i",
+        "/tmp/test1,/tmp/test2"
+    });
+
+    int argc = argv.size() - 1;
+
+    args = parseArgs(argc, argv.data());
+
+    REQUIRE_EQ(args.alphaK, 0);
+}
+
+TEST_CASE(test_args_alpha_rejects_bad_k) {
+    for (const char *bad : {"1", "0", "-3", "abc", "5x"}) {
+        optind = 1;
+        auto argv = make_argv({
+            "prog",
+            "-A",
+            bad,
+            "-q",
+            "matrix.tsv",
+            "-i",
+            "/tmp/test1,/tmp/test2"
+        });
+        int argc = argv.size() - 1;
+        bool threw = false;
+        try {
+            parseArgs(argc, argv.data());
+        } catch (const std::runtime_error &) {
+            threw = true;
+        }
+        REQUIRE(threw);
+    }
+}

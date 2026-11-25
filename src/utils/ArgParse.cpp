@@ -56,6 +56,7 @@ std::ostream &operator<<(std::ostream &out, const Args &a) {
       << "mode: " << a.mode << '\n'
       << "numGeneratorIterations: " << a.numGeneratorIterations << '\n'
       << "coordScale: " << a.coordScale << '\n'
+      << "alphaK: " << a.alphaK << '\n'
       << "bestKind: " << static_cast<int>(a.bestKind) << '\n'
       << "bestValue: " << a.bestValue << '\n'
       << "doSine: " << a.doSine << '\n'
@@ -83,7 +84,7 @@ Args parseArgs(int argc, char *argv[]) {
   Args a;
   int opt = 0;
   bool optIProvided = false;
-  while ((opt = getopt(argc, argv, ":hq:g:i:o:S:b:sdaIrl")) != -1) {
+  while ((opt = getopt(argc, argv, ":hq:g:i:o:S:A:b:sdaIrl")) != -1) {
     switch (opt) {
     // print usage
     case 'h': {
@@ -162,6 +163,20 @@ Args parseArgs(int argc, char *argv[]) {
         throw std::runtime_error("argument for -S must be a positive number");
       }
       a.coordScale = scale;
+      break;
+    }
+    case 'A': {
+      size_t pos = 0;
+      int k = 0;
+      try {
+        k = std::stoi(optarg, &pos);
+      } catch (const std::exception &) {
+        pos = 0;
+      }
+      if (pos == 0 || optarg[pos] != '\0' || k < 2) {
+        throw std::runtime_error("argument for -A must be an integer >= 2");
+      }
+      a.alphaK = k;
       break;
     }
     // best-scoring pairs only: <N>n (top N pairs) or <P>g (top P percent)
